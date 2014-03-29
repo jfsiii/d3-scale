@@ -1235,7 +1235,7 @@
             return n ? (date.y = d3_time_expandYear(+n[0]), i + n[0].length) : -1;
         }
         function d3_time_parseZone(date, string, i) {
-            return /^[+-]\d{4}$/.test(string = string.substring(i, i + 5)) ? (date.Z = +string, 
+            return /^[+-]\d{4}$/.test(string = string.substring(i, i + 5)) ? (date.Z = +string,
             i + 5) : -1;
         }
         function d3_time_expandYear(d) {
@@ -1393,6 +1393,14 @@
                 var j = d3.bisect(domain, x, 1, k) - 1;
                 return i[j](u[j](x));
             };
+        }
+        d3.scale = {};
+        function d3_scaleExtent(domain) {
+            var start = domain[0], stop = domain[domain.length - 1];
+            return start < stop ? [ start, stop ] : [ stop, start ];
+        }
+        function d3_scaleRange(scale) {
+            return scale.rangeExtent ? scale.rangeExtent() : d3_scaleExtent(scale.range());
         }
         d3.scale.linear = function() {
             return d3_scale_linear([ 0, 1 ], [ 0, 1 ], d3_interpolate, false);
@@ -1555,7 +1563,7 @@
             scale.tickFormat = function(n, format) {
                 if (!arguments.length) return d3_scale_logFormat;
                 if (arguments.length < 2) format = d3_scale_logFormat; else if (typeof format !== "function") format = d3.format(format);
-                var k = Math.max(.1, n / scale.ticks().length), f = positive ? (e = 1e-12, Math.ceil) : (e = -1e-12, 
+                var k = Math.max(.1, n / scale.ticks().length), f = positive ? (e = 1e-12, Math.ceil) : (e = -1e-12,
                 Math.floor), e;
                 return function(d) {
                     return d / pow(f(log(d) + e)) <= k ? format(d) : "";
@@ -1843,6 +1851,109 @@
             };
             return identity;
         }
+        function d3_time_scale(linear, methods, format) {
+            function scale(x) {
+                return linear(x);
+            }
+            scale.invert = function(x) {
+                return d3_time_scaleDate(linear.invert(x));
+            };
+            scale.domain = function(x) {
+                if (!arguments.length) return linear.domain().map(d3_time_scaleDate);
+                linear.domain(x);
+                return scale;
+            };
+            function tickMethod(extent, count) {
+                var span = extent[1] - extent[0], target = span / count, i = d3.bisect(d3_time_scaleSteps, target);
+                return i == d3_time_scaleSteps.length ? [ methods.year, d3_scale_linearTickRange(extent.map(function(d) {
+                    return d / 31536e6;
+                }), count)[2] ] : !i ? [ d3_time_scaleMilliseconds, d3_scale_linearTickRange(extent, count)[2] ] : methods[target / d3_time_scaleSteps[i - 1] < d3_time_scaleSteps[i] / target ? i - 1 : i];
+            }
+            scale.nice = function(interval, skip) {
+                var domain = scale.domain(), extent = d3_scaleExtent(domain), method = interval == null ? tickMethod(extent, 10) : typeof interval === "number" && tickMethod(extent, interval);
+                if (method) interval = method[0], skip = method[1];
+                function skipped(date) {
+                    return !isNaN(date) && !interval.range(date, d3_time_scaleDate(+date + 1), skip).length;
+                }
+                return scale.domain(d3_scale_nice(domain, skip > 1 ? {
+                    floor: function(date) {
+                        while (skipped(date = interval.floor(date))) date = d3_time_scaleDate(date - 1);
+                        return date;
+                    },
+                    ceil: function(date) {
+                        while (skipped(date = interval.ceil(date))) date = d3_time_scaleDate(+date + 1);
+                        return date;
+                    }
+                } : interval));
+            };
+            scale.ticks = function(interval, skip) {
+                var extent = d3_scaleExtent(scale.domain()), method = interval == null ? tickMethod(extent, 10) : typeof interval === "number" ? tickMethod(extent, interval) : !interval.range && [ {
+                    range: interval
+                }, skip ];
+                if (method) interval = method[0], skip = method[1];
+                return interval.range(extent[0], d3_time_scaleDate(+extent[1] + 1), skip < 1 ? 1 : skip);
+            };
+            scale.tickFormat = function() {
+                return format;
+            };
+            scale.copy = function() {
+                return d3_time_scale(linear.copy(), methods, format);
+            };
+            return d3_scale_linearRebind(scale, linear);
+        }
+        function d3_time_scaleDate(t) {
+            return new Date(t);
+        }
+        var d3_time_scaleSteps = [ 1e3, 5e3, 15e3, 3e4, 6e4, 3e5, 9e5, 18e5, 36e5, 108e5, 216e5, 432e5, 864e5, 1728e5, 6048e5, 2592e6, 7776e6, 31536e6 ];
+        var d3_time_scaleLocalMethods = [ [ d3_time.second, 1 ], [ d3_time.second, 5 ], [ d3_time.second, 15 ], [ d3_time.second, 30 ], [ d3_time.minute, 1 ], [ d3_time.minute, 5 ], [ d3_time.minute, 15 ], [ d3_time.minute, 30 ], [ d3_time.hour, 1 ], [ d3_time.hour, 3 ], [ d3_time.hour, 6 ], [ d3_time.hour, 12 ], [ d3_time.day, 1 ], [ d3_time.day, 2 ], [ d3_time.week, 1 ], [ d3_time.month, 1 ], [ d3_time.month, 3 ], [ d3_time.year, 1 ] ];
+        var d3_time_scaleLocalFormat = d3_time_format.multi([ [ ".%L", function(d) {
+            return d.getMilliseconds();
+        } ], [ ":%S", function(d) {
+            return d.getSeconds();
+        } ], [ "%I:%M", function(d) {
+            return d.getMinutes();
+        } ], [ "%I %p", function(d) {
+            return d.getHours();
+        } ], [ "%a %d", function(d) {
+            return d.getDay() && d.getDate() != 1;
+        } ], [ "%b %d", function(d) {
+            return d.getDate() != 1;
+        } ], [ "%B", function(d) {
+            return d.getMonth();
+        } ], [ "%Y", d3_true ] ]);
+        var d3_time_scaleMilliseconds = {
+            range: function(start, stop, step) {
+                return d3.range(Math.ceil(start / step) * step, +stop, step).map(d3_time_scaleDate);
+            },
+            floor: d3_identity,
+            ceil: d3_identity
+        };
+        d3_time_scaleLocalMethods.year = d3_time.year;
+        d3_time.scale = function() {
+            return d3_time_scale(d3.scale.linear(), d3_time_scaleLocalMethods, d3_time_scaleLocalFormat);
+        };
+        var d3_time_scaleUtcMethods = d3_time_scaleLocalMethods.map(function(m) {
+            return [ m[0].utc, m[1] ];
+        });
+        var d3_time_scaleUtcFormat = d3_time_formatUtc.multi([ [ ".%L", function(d) {
+            return d.getUTCMilliseconds();
+        } ], [ ":%S", function(d) {
+            return d.getUTCSeconds();
+        } ], [ "%I:%M", function(d) {
+            return d.getUTCMinutes();
+        } ], [ "%I %p", function(d) {
+            return d.getUTCHours();
+        } ], [ "%a %d", function(d) {
+            return d.getUTCDay() && d.getUTCDate() != 1;
+        } ], [ "%b %d", function(d) {
+            return d.getUTCDate() != 1;
+        } ], [ "%B", function(d) {
+            return d.getUTCMonth();
+        } ], [ "%Y", d3_true ] ]);
+        d3_time_scaleUtcMethods.year = d3_time.year.utc;
+        d3_time.scale.utc = function() {
+            return d3_time_scale(d3.scale.linear(), d3_time_scaleUtcMethods, d3_time_scaleUtcFormat);
+        };
         if (typeof define === "function" && define.amd) {
             define(d3);
         } else if (typeof module === "object" && module.exports) {
